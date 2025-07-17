@@ -3,17 +3,12 @@
 
 # 🧠 Imports
 import gradio as gr
-from transformers import SiglipForImageClassification
-from PIL import Image
 import torch
+from PIL import Image
 import torchvision.transforms as T
 
-# 📂 Load the pretrained Hugging Face model base
-model_name = "prithivMLmods/Alphabet-Sign-Language-Detection"
-model = SiglipForImageClassification.from_pretrained(model_name)
-
-# ⬇️ Load your trained weights (upload ASL.pt to /content/)
-model.load_state_dict(torch.load("/content/ASL.pt", map_location="cpu"))
+# ⚠️ Load pickled model safely (entire model object)
+model = torch.load("/content/ASL.pt", map_location="cpu", weights_only=False)
 model.eval()
 
 # 🔁 Manual preprocessing (resize, tensor, normalize)
@@ -47,7 +42,7 @@ interface = gr.Interface(
     inputs=gr.Image(source="webcam", streaming=True, live=True),
     outputs=gr.Textbox(label="Detected Letter"),
     title="🧠 Real-Time Sign Language Translator",
-    description="Upload your ASL.pt model, then run this app. The webcam will classify hand signs into English letters (A-Z).",
+    description="Live webcam-based ASL letter detection using a pre-trained model.",
     live=True
 )
 
