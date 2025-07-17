@@ -1,67 +1,49 @@
-# 📦 Install dependencies
-pip install -q gradio onnxruntime numpy opencv-python gTTS
-
-# ✅ Import modules
 import gradio as gr
-import onnxruntime as ort
-import numpy as np
 from PIL import Image
-from gtts import gTTS
-import os
+import torch
+import torchvision.transforms as T
 
-# ✅ Load the ONNX model
-MODEL_PATH = "/content/ASL.onnx"  # Make sure this file exists in your Colab
-session = ort.InferenceSession(MODEL_PATH)
-input_name = session.get_inputs()[0].name
-output_name = session.get_outputs()[0].name
+# Load the local PyTorch model
+model_path = "/content/ASL.pt"
+model = torch.load(model_path, map_location=torch.device("cpu"))
+model.eval()
 
-# ✅ ASL Class Labels (A–Z)
-LABELS = [chr(i) for i in range(65, 91)]  # A-Z
+# Manual preprocessing
+transform = T.Compose([
+    T.Resize((224, 224)),
+    T.ToTensor(),  # Converts to [C, H, W] in [0, 1]
+    T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1]
+])
 
-# ✅ Preprocess image
-def preprocess(frame):
-    image = Image.fromarray(frame).convert("RGB")
-    image = image.resize((224, 224))
-    img_array = np.array(image).astype(np.float32) / 255.0
-    img_array = img_array.transpose(2, 0, 1)  # HWC to CHW
-    img_array = np.expand_dims(img_array, axis=0)  # Add batch dimension
-    return img_array
+# Class labels for A-Z (26 classes)
+labels = {
+    str(i): chr(65 + i) for i in range(26)
+}
 
-# ✅ Inference + TTS
-def recognize_and_speak(frame, speak):
-    input_tensor = preprocess(frame)
-    outputs = session.run([output_name], {input_name: input_tensor})[0]
-    
-    pred_idx = np.argmax(outputs, axis=1)[0]
-    confidence = float(np.max(outputs))
-    label = LABELS[pred_idx]
-    result_text = f"Prediction: {label} ({round(confidence * 100, 2)}%)"
+# Prediction function
+def classify_sign(image):
+    image = Image.fromarray(image).convert("RGB")
+    input_tensor = transform(image).unsqueeze(0)  # Add batch dimension
 
-    audio_path = None
-    if speak:
-        tts = gTTS(text=label, lang='en')
-        audio_path = "/content/tts_output.mp3"
-        tts.save(audio_path)
+    with torch.no_grad():
+        outputs = model(input_tensor)
+        probs = torch.nn.functional.softmax(outputs, dim=1).squeeze()
 
-    return result_text, (audio_path if speak else None)
+    top_idx = torch.argmax(probs).item()
+    prediction = labels[str(top_idx)]
+    confidence = round(probs[top_idx].item() * 100, 2)
 
-# ✅ Gradio App
-with gr.Blocks(title="ASL Gesture Recognizer (ONNX)") as demo:
-    gr.Markdown("# 🤟 ASL Gesture Recognizer")
-    gr.Markdown("Live ASL letter prediction using webcam and ONNX model in Colab.")
+    return f"{prediction} ({confidence}%)"
 
-    with gr.Row():
-        webcam = gr.Image(label="📷 Live Webcam", source="webcam", tool=None)
-        speak_checkbox = gr.Checkbox(label="🔊 Enable Text-to-Speech")
+# Gradio interface for webcam input
+interface = gr.Interface(
+    fn=classify_sign,
+    inputs=gr.Image(source="webcam", streaming=True, live=True),
+    outputs=gr.Textbox(label="Detected Letter"),
+    title="🧠 Real-Time Sign Language Translator",
+    description="Detects and classifies hand signs from the webcam in real time. Translates ASL letters into English text.",
+    live=True
+)
 
-    output_text = gr.Textbox(label="✍️ Recognized Letter")
-    audio_output = gr.Audio(label="🔈 Audio Output", type="file")
-
-    webcam.change(
-        recognize_and_speak,
-        inputs=[webcam, speak_checkbox],
-        outputs=[output_text, audio_output],
-        every=1.5  # Run every 1.5 seconds
-    )
-
-demo.launch(share=True)
+if __name__ == "__main__":
+    interface.launch()
